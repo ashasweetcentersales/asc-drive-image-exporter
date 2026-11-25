@@ -82,26 +82,27 @@ function DriveImage({ file, token, className = "", alt = "" }) {
 }
 
 // Extract folder ID from a Drive URL or direct folder ID.
-function extractFolderId(input) {
+
+function extractDriveId(input) {
   const value = input.trim();
 
-  if (
-    /^[a-zA-Z0-9_-]{10,}$/.test(value) &&
-    !value.includes("/")
-  ) {
+  if (/^[a-zA-Z0-9_-]{10,}$/.test(value)) {
     return value;
   }
 
   const match =
     value.match(/\/folders\/([a-zA-Z0-9_-]+)/) ||
+    value.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) ||
+    value.match(/\/d\/([a-zA-Z0-9_-]+)/) ||
     value.match(/[?&]id=([a-zA-Z0-9_-]+)/);
 
   if (match) return match[1];
 
   throw new Error(
-    "Paste a valid Google Drive folder URL or folder ID."
+    "Enter a valid Google Drive folder or image URL."
   );
 }
+
 
 function extension(name, mimeType) {
   const dot = name.lastIndexOf(".");
