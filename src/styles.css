@@ -1355,3 +1355,73 @@ a {
     padding: 23px;
   }
 }
+.single-link-result {
+  margin: 24px 0;
+  padding: 22px;
+  background: #fffaf5;
+  border: 1px solid #eadcc9;
+  border-radius: 12px;
+}
+
+.single-link-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.single-link-heading h3 {
+  margin: 7px 0 4px;
+  font-size: 17px;
+  color: #292323;
+  overflow-wrap: anywhere;
+}
+
+.single-link-heading p {
+  margin: 0;
+  color: #777;
+  font-size: 13px;
+}
+
+.copy-link-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 11px 17px;
+  background: #9d1d32;
+  color: #fff;
+  border: none;
+  border-radius: 7px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.copy-link-button:hover {
+  background: #7f1728;
+}
+
+.direct-link-field input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border: 1px solid #e4d8cc;
+  border-radius: 7px;
+  background: #fff;
+  color: #555;
+  font-size: 13px;
+  outline: none;
+}
+
+@media (max-width: 600px) {
+  .single-link-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .copy-link-button {
+    width: 100%;
+  }
+}

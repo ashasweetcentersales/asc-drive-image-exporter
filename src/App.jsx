@@ -2,16 +2,32 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import ExcelJS from "exceljs";
 import {
-  ArrowDownToLine, Check, ChevronDown, CircleAlert, FileSpreadsheet,
-  FolderOpen, Image as ImageIcon, Link2, LoaderCircle, LogIn, LogOut,
-  Search, ShieldCheck, X, Copy, Files
+  ArrowDownToLine,
+  Check,
+  ChevronDown,
+  CircleAlert,
+  FileSpreadsheet,
+  FolderOpen,
+  Image as ImageIcon,
+  Link2,
+  LoaderCircle,
+  LogIn,
+  LogOut,
+  Search,
+  ShieldCheck,
+  X,
+  Copy,
+  Files
 } from "lucide-react";
 
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
 const FOLDER_MIME = "application/vnd.google-apps.folder";
 const IMAGE_MIME_PREFIX = "image/";
 
-// Load private Drive images using the authenticated Google account.
+// --------------------------------------------------
+// IMAGE PREVIEW
+// --------------------------------------------------
+
 function DriveImage({ file, token, className = "", alt = "" }) {
   const [src, setSrc] = useState("");
   const [failed, setFailed] = useState(false);
@@ -37,11 +53,12 @@ function DriveImage({ file, token, className = "", alt = "" }) {
         if (!response.ok) {
           throw new Error("Preview unavailable");
         }
+
         return response.blob();
       })
       .then((blob) => {
         if (!blob.type.startsWith("image/")) {
-          throw new Error("Not an image response");
+          throw new Error("Invalid image response");
         }
 
         objectUrl = URL.createObjectURL(blob);
@@ -56,7 +73,10 @@ function DriveImage({ file, token, className = "", alt = "" }) {
 
     return () => {
       active = false;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
+
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
     };
   }, [file?.id, token]);
 
@@ -73,15 +93,18 @@ function DriveImage({ file, token, className = "", alt = "" }) {
 
   return (
     <span
-      className={`thumb-fallback ${failed ? "preview-unavailable" : ""}`}
-      aria-label={failed ? "Preview unavailable" : "Loading preview"}
+      className={`thumb-fallback ${
+        failed ? "preview-unavailable" : ""
+      }`}
     >
       <ImageIcon size={26} />
     </span>
   );
 }
 
-// Extract folder ID from a Drive URL or direct folder ID.
+// --------------------------------------------------
+// GOOGLE DRIVE LINK EXTRACTION
+// --------------------------------------------------
 
 function extractDriveId(input) {
   const value = input.trim();
@@ -90,19 +113,23 @@ function extractDriveId(input) {
     return value;
   }
 
-  const match =
-    value.match(/\/folders\/([a-zA-Z0-9_-]+)/) ||
-    value.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) ||
-    value.match(/\/d\/([a-zA-Z0-9_-]+)/) ||
-    value.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  const patterns = [
+    /\/folders\/([a-zA-Z0-9_-]+)/,
+    /\/file\/d\/([a-zA-Z0-9_-]+)/,
+    /\/d\/([a-zA-Z0-9_-]+)/,
+    /[?&]id=([a-zA-Z0-9_-]+)/
+  ];
 
-  if (match) return match[1];
+  for (const pattern of patterns) {
+    const match = value.match(pattern);
+
+    if (match) return match[1];
+  }
 
   throw new Error(
-    "Enter a valid Google Drive folder or image URL."
+    "Enter a valid Google Drive folder URL or image URL."
   );
 }
-
 
 function extension(name, mimeType) {
   const dot = name.lastIndexOf(".");
@@ -118,7 +145,53 @@ function extension(name, mimeType) {
   );
 }
 
-// Retrieve all files inside one Drive folder.
+function getDriveLinks(file) {
+  return {
+    copyLink:
+      file.webViewLink ||
+      `https://drive.google.com/file/d/${file.id}/view`,
+
+    directLink:
+      `https://lh3.googleusercontent.com/d/${file.id}`
+  };
+}
+
+// --------------------------------------------------
+// DRIVE API: GET FILE METADATA
+// --------------------------------------------------
+
+async function getDriveMetadata(token, fileId) {
+  const params = new URLSearchParams({
+    fields:
+      "id,name,mimeType,webViewLink,size,md5Checksum,modifiedTime",
+    supportsAllDrives: "true"
+  });
+
+  const response = await fetch(
+    `${DRIVE_API}/files/${encodeURIComponent(fileId)}?${params}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      data?.error?.message ||
+      "Unable to access this Google Drive item."
+    );
+  }
+
+  return data;
+}
+
+// --------------------------------------------------
+// DRIVE API: LIST FOLDER CONTENTS
+// --------------------------------------------------
+
 async function driveList(token, folderId) {
   const all = [];
   let pageToken = "";
@@ -150,28 +223,10 @@ async function driveList(token, folderId) {
     const data = await response.json();
 
     if (!response.ok) {
-      const message =
-        data?.error?.message || "Google Drive request failed.";
-
-      if (response.status === 401) {
-        throw new Error(
-          "Google sign-in expired. Disconnect and sign in again."
-        );
-      }
-
-      if (response.status === 403) {
-        throw new Error(
-          `Drive access denied: ${message}. Confirm that this Google account can open the folder.`
-        );
-      }
-
-      if (response.status === 404) {
-        throw new Error(
-          "Folder not found. Check the URL and make sure this Google account has access."
-        );
-      }
-
-      throw new Error(message);
+      throw new Error(
+        data?.error?.message ||
+        "Google Drive folder request failed."
+      );
     }
 
     all.push(...(data.files || []));
@@ -182,9 +237,46 @@ async function driveList(token, folderId) {
   return all;
 }
 
-// Scan the selected folder and optionally its subfolders.
+// --------------------------------------------------
+// IMAGE OBJECT
+// --------------------------------------------------
+
+function createImageRecord(file, folderPath = "Individual image") {
+  const links = getDriveLinks(file);
+
+  return {
+    id: file.id,
+    name: file.name,
+    format: extension(file.name, file.mimeType),
+    mimeType: file.mimeType,
+
+    copyLink: links.copyLink,
+    directLink: links.directLink,
+
+    folderPath,
+
+    size: Number(file.size || 0),
+    md5Checksum: file.md5Checksum || "",
+    modifiedTime: file.modifiedTime || "",
+    thumbnailLink: file.thumbnailLink || "",
+
+    exactDuplicate: false,
+    repeatedName: false
+  };
+}
+
+// --------------------------------------------------
+// SCAN FOLDER RECURSIVELY
+// --------------------------------------------------
+
 async function scanFolder(token, rootId, recursive, onProgress) {
-  const queue = [{ id: rootId, path: "" }];
+  const queue = [
+    {
+      id: rootId,
+      path: ""
+    }
+  ];
+
   const visited = new Set();
   const images = [];
 
@@ -219,22 +311,12 @@ async function scanFolder(token, rootId, recursive, onProgress) {
       } else if (
         (file.mimeType || "").startsWith(IMAGE_MIME_PREFIX)
       ) {
-        images.push({
-          name: file.name,
-          format: extension(file.name, file.mimeType),
-          copyLink:
-            file.webViewLink ||
-            `https://drive.google.com/file/d/${file.id}/view`,
-          directLink:
-            `https://lh3.googleusercontent.com/d/${file.id}`,
-          folderPath: current.path || "Root folder",
-          id: file.id,
-          mimeType: file.mimeType,
-          thumbnailLink: file.thumbnailLink || "",
-          size: Number(file.size || 0),
-          md5Checksum: file.md5Checksum || "",
-          modifiedTime: file.modifiedTime || ""
-        });
+        images.push(
+          createImageRecord(
+            file,
+            current.path || "Root folder"
+          )
+        );
       }
     }
 
@@ -245,8 +327,38 @@ async function scanFolder(token, rootId, recursive, onProgress) {
     });
   }
 
-  // Identify exact duplicates using MD5 checksums.
+  return enrichDuplicates(images, foldersScanned);
+}
+
+// --------------------------------------------------
+// SINGLE IMAGE PROCESSING
+// --------------------------------------------------
+
+function processSingleImage(file, onProgress) {
+  if (!file.mimeType?.startsWith(IMAGE_MIME_PREFIX)) {
+    throw new Error(
+      "The supplied Google Drive file is not a supported image."
+    );
+  }
+
+  const image = createImageRecord(file, "Individual image");
+
+  onProgress?.({
+    foldersScanned: 0,
+    imageCount: 1,
+    folderName: file.name
+  });
+
+  return enrichDuplicates([image], 0);
+}
+
+// --------------------------------------------------
+// DUPLICATE DETECTION
+// --------------------------------------------------
+
+function enrichDuplicates(images, foldersScanned) {
   const checksumCounts = new Map();
+  const nameCounts = new Map();
 
   for (const image of images) {
     if (image.md5Checksum) {
@@ -255,12 +367,7 @@ async function scanFolder(token, rootId, recursive, onProgress) {
         (checksumCounts.get(image.md5Checksum) || 0) + 1
       );
     }
-  }
 
-  // Identify files with repeated names.
-  const nameCounts = new Map();
-
-  for (const image of images) {
     const key = image.name.trim().toLowerCase();
 
     nameCounts.set(
@@ -271,9 +378,11 @@ async function scanFolder(token, rootId, recursive, onProgress) {
 
   const enriched = images.map((image) => ({
     ...image,
+
     exactDuplicate:
       !!image.md5Checksum &&
       checksumCounts.get(image.md5Checksum) > 1,
+
     repeatedName:
       nameCounts.get(image.name.trim().toLowerCase()) > 1
   }));
@@ -281,14 +390,23 @@ async function scanFolder(token, rootId, recursive, onProgress) {
   return {
     images: enriched,
     foldersScanned,
+
     exactDuplicateGroups:
-      [...checksumCounts.values()].filter((count) => count > 1).length,
+      [...checksumCounts.values()].filter(
+        (count) => count > 1
+      ).length,
+
     exactDuplicateFiles:
       enriched.filter((image) => image.exactDuplicate).length,
+
     repeatedNameFiles:
       enriched.filter((image) => image.repeatedName).length
   };
 }
+
+// --------------------------------------------------
+// UTILITIES
+// --------------------------------------------------
 
 function formatBytes(bytes) {
   if (!bytes) return "—";
@@ -304,11 +422,17 @@ function formatBytes(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+// --------------------------------------------------
+// MAIN APPLICATION
+// --------------------------------------------------
+
 function App() {
-  const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
+  const clientId =
+    import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 
   const [folderUrl, setFolderUrl] = useState("");
   const [recursive, setRecursive] = useState(true);
+
   const [token, setToken] = useState("");
   const [status, setStatus] = useState("idle");
 
@@ -319,8 +443,10 @@ function App() {
   });
 
   const [images, setImages] = useState([]);
+  const [copiedId, setCopiedId] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+
   const [showSettings, setShowSettings] = useState(false);
 
   const [query, setQuery] = useState("");
@@ -330,7 +456,10 @@ function App() {
 
   const tokenClient = useRef(null);
 
-  // Initialise Google OAuth.
+  // --------------------------------------------------
+  // GOOGLE OAUTH INITIALISATION
+  // --------------------------------------------------
+
   useEffect(() => {
     if (
       !window.google?.accounts?.oauth2 ||
@@ -342,7 +471,9 @@ function App() {
     tokenClient.current =
       window.google.accounts.oauth2.initTokenClient({
         client_id: clientId.trim(),
-        scope: "https://www.googleapis.com/auth/drive.readonly",
+
+        scope:
+          "https://www.googleapis.com/auth/drive.readonly",
 
         callback: (response) => {
           if (response.error) {
@@ -357,20 +488,25 @@ function App() {
           }
 
           setToken(response.access_token);
+          setError("");
 
           setNotice(
-            "Google Drive connected. You can scan an Asha Sweet Center product-image folder."
+            "Google Drive connected successfully."
           );
 
-          setError("");
           setStatus("idle");
         }
       });
 
   }, [clientId]);
 
+  // --------------------------------------------------
+  // FILTERS
+  // --------------------------------------------------
+
   const formats = useMemo(
-    () => [...new Set(images.map((item) => item.format))].sort(),
+    () =>
+      [...new Set(images.map((item) => item.format))].sort(),
     [images]
   );
 
@@ -402,22 +538,29 @@ function App() {
 
   }, [images, query, formatFilter, duplicateOnly]);
 
+  // --------------------------------------------------
+  // GOOGLE SIGN-IN
+  // --------------------------------------------------
+
   function signIn() {
     setError("");
     setNotice("");
 
     if (!clientId.trim()) {
       setShowSettings(true);
+
       setError(
-        "Google OAuth Client ID is not configured. Add it to .env.local."
+        "Google OAuth Client ID is not configured."
       );
+
       return;
     }
 
     if (!window.google?.accounts?.oauth2) {
       setError(
-        "Google sign-in is still loading. Wait a moment and try again."
+        "Google sign-in is loading. Please try again."
       );
+
       return;
     }
 
@@ -426,15 +569,20 @@ function App() {
     });
   }
 
+  // --------------------------------------------------
+  // MAIN SCAN FUNCTION
+  // SUPPORTS FOLDER AND SINGLE IMAGE LINKS
+  // --------------------------------------------------
+
   async function handleExport() {
     setError("");
     setNotice("");
     setImages([]);
 
-    let folderId;
+    let driveId;
 
     try {
-      folderId = extractFolderId(folderUrl);
+      driveId = extractDriveId(folderUrl);
     } catch (err) {
       setError(err.message);
       return;
@@ -442,8 +590,9 @@ function App() {
 
     if (!token) {
       setError(
-        "Connect your Google account before scanning a folder."
+        "Connect your Google account before scanning."
       );
+
       return;
     }
 
@@ -452,23 +601,54 @@ function App() {
     setProgress({
       foldersScanned: 0,
       imageCount: 0,
-      folderName: "Starting…"
+      folderName: "Identifying Drive item..."
     });
 
     try {
-      const result = await scanFolder(
+      // First identify whether the supplied link is a folder or file.
+      const metadata = await getDriveMetadata(
         token,
-        folderId,
-        recursive,
-        setProgress
+        driveId
       );
+
+      let result;
+
+      if (metadata.mimeType === FOLDER_MIME) {
+        // FOLDER LINK
+        result = await scanFolder(
+          token,
+          driveId,
+          recursive,
+          setProgress
+        );
+
+      } else if (
+        metadata.mimeType?.startsWith(IMAGE_MIME_PREFIX)
+      ) {
+        // SINGLE IMAGE LINK
+        result = processSingleImage(
+          metadata,
+          setProgress
+        );
+
+      } else {
+        throw new Error(
+          "Unsupported Drive item. Please provide a folder or image file URL."
+        );
+      }
 
       setImages(result.images);
       setStatus("done");
 
-      setNotice(
-        `Scan complete: ${result.images.length} images found in ${result.foldersScanned} folder(s).`
-      );
+      if (metadata.mimeType === FOLDER_MIME) {
+        setNotice(
+          `Folder scan complete: ${result.images.length} images found in ${result.foldersScanned} folder(s).`
+        );
+      } else {
+        setNotice(
+          `Individual image processed successfully: ${metadata.name}`
+        );
+      }
 
       if (!result.images.length) {
         setNotice(
@@ -478,13 +658,18 @@ function App() {
 
     } catch (err) {
       setStatus("idle");
+
       setError(
-        err.message || "Unable to scan this folder."
+        err.message ||
+        "Unable to process this Google Drive link."
       );
     }
   }
 
-  // Export the complete image inventory to Excel.
+  // --------------------------------------------------
+  // EXCEL EXPORT
+  // --------------------------------------------------
+
   async function downloadExcel() {
     if (!images.length) return;
 
@@ -492,7 +677,9 @@ function App() {
 
     workbook.creator = "Asha Sweet Center";
     workbook.subject = "Product image inventory";
-    workbook.title = "Asha Sweet Center - Drive Image Index";
+    workbook.title =
+      "Asha Sweet Center - Drive Image Index";
+
     workbook.created = new Date();
 
     const sheet = workbook.addWorksheet("Images", {
@@ -506,15 +693,51 @@ function App() {
     });
 
     sheet.columns = [
-      { header: "Image Name", key: "name", width: 38 },
-      { header: "Format", key: "format", width: 12 },
-      { header: "Copy Link URL", key: "copyLink", width: 48 },
-      { header: "Direct Image URL", key: "directLink", width: 58 },
-      { header: "Folder Path", key: "folderPath", width: 32 },
-      { header: "File Size", key: "size", width: 14 },
-      { header: "Exact Duplicate", key: "exactDuplicate", width: 17 },
-      { header: "Repeated Filename", key: "repeatedName", width: 19 },
-      { header: "Last Modified", key: "modifiedTime", width: 23 }
+      {
+        header: "Image Name",
+        key: "name",
+        width: 38
+      },
+      {
+        header: "Format",
+        key: "format",
+        width: 12
+      },
+      {
+        header: "Copy Link URL",
+        key: "copyLink",
+        width: 48
+      },
+      {
+        header: "Direct Image URL",
+        key: "directLink",
+        width: 58
+      },
+      {
+        header: "Folder Path",
+        key: "folderPath",
+        width: 32
+      },
+      {
+        header: "File Size",
+        key: "size",
+        width: 14
+      },
+      {
+        header: "Exact Duplicate",
+        key: "exactDuplicate",
+        width: 17
+      },
+      {
+        header: "Repeated Filename",
+        key: "repeatedName",
+        width: 19
+      },
+      {
+        header: "Last Modified",
+        key: "modifiedTime",
+        width: 23
+      }
     ];
 
     sheet.addRows(
@@ -663,7 +886,8 @@ function App() {
     const blob = new Blob(
       [buffer],
       {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        type:
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
       }
     );
 
@@ -671,15 +895,21 @@ function App() {
     const anchor = document.createElement("a");
 
     anchor.href = url;
+
     anchor.download =
-      `ASC-Product-Image-Index-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      `ASC-Product-Image-Index-${new Date()
+        .toISOString()
+        .slice(0, 10)}.xlsx`;
 
     anchor.click();
 
     URL.revokeObjectURL(url);
   }
 
-  // Export the image inventory to CSV.
+  // --------------------------------------------------
+  // CSV EXPORT
+  // --------------------------------------------------
+
   function downloadCsv() {
     if (!images.length) return;
 
@@ -718,27 +948,53 @@ function App() {
 
     const blob = new Blob(
       [csv],
-      { type: "text/csv;charset=utf-8;" }
+      {
+        type: "text/csv;charset=utf-8;"
+      }
     );
 
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
 
     anchor.href = url;
+
     anchor.download =
-      `ASC-Product-Image-Index-${new Date().toISOString().slice(0, 10)}.csv`;
+      `ASC-Product-Image-Index-${new Date()
+        .toISOString()
+        .slice(0, 10)}.csv`;
 
     anchor.click();
 
     URL.revokeObjectURL(url);
   }
 
+  // --------------------------------------------------
+  // DISCONNECT
+  // --------------------------------------------------
+async function copyDirectLink(image) {
+  try {
+    await navigator.clipboard.writeText(image.directLink);
+    setCopiedId(image.id);
+
+    setTimeout(() => {
+      setCopiedId("");
+    }, 2000);
+  } catch (error) {
+    setError("Unable to copy link. Please copy it manually.");
+  }
+}
   function disconnect() {
     setToken("");
     setImages([]);
     setStatus("idle");
+
     setNotice("Google Drive disconnected.");
+    setError("");
   }
+
+  // --------------------------------------------------
+  // SUMMARY
+  // --------------------------------------------------
 
   const exactDuplicateCount =
     images.filter((item) => item.exactDuplicate).length;
@@ -746,10 +1002,15 @@ function App() {
   const repeatedNameCount =
     images.filter((item) => item.repeatedName).length;
 
+  // --------------------------------------------------
+  // USER INTERFACE
+  // --------------------------------------------------
+
   return (
     <main className="app-shell">
 
       {/* HEADER */}
+
       <header className="topbar">
 
         <a
@@ -804,9 +1065,11 @@ function App() {
           </button>
 
         </div>
+
       </header>
 
       {/* INTRODUCTION */}
+
       <section className="hero">
 
         <div className="eyebrow">
@@ -821,18 +1084,21 @@ function App() {
 
         <p className="hero-copy">
           Create a searchable image inventory from your Google
-          Drive product folders. Preview files, identify duplicates
-          and export clean Excel or CSV reports.
+          Drive product folders or individual image links.
+          Preview files, identify duplicates and export clean
+          Excel or CSV reports.
         </p>
 
       </section>
 
       {/* MAIN WORKSPACE */}
+
       <section className="workspace">
 
         <div className="panel">
 
           {/* STEP 1 */}
+
           <div className="panel-heading">
 
             <div className="step-icon">
@@ -841,14 +1107,17 @@ function App() {
 
             <div>
               <h2>Connect Google Drive</h2>
+
               <p>
                 Use your Asha Sweet Center Google account or
-                an account with folder access.
+                an account with access to the required files.
               </p>
             </div>
 
             <div
-              className={`connection-state ${token ? "connected" : ""}`}
+              className={`connection-state ${
+                token ? "connected" : ""
+              }`}
             >
               <span />
               {token ? "Connected" : "Not connected"}
@@ -857,7 +1126,9 @@ function App() {
           </div>
 
           <button
-            className={`google-button ${token ? "google-connected" : ""}`}
+            className={`google-button ${
+              token ? "google-connected" : ""
+            }`}
             onClick={token ? disconnect : signIn}
           >
             {token ? (
@@ -875,12 +1146,13 @@ function App() {
 
           <p className="microcopy">
             <ShieldCheck size={13} />
-            Read-only permission. Files are not uploaded or modified.
+            Read-only permission. Files are not modified.
           </p>
 
           <div className="section-divider" />
 
           {/* STEP 2 */}
+
           <div className="panel-heading folder-heading">
 
             <div className="step-icon">
@@ -888,8 +1160,11 @@ function App() {
             </div>
 
             <div>
-              <h2>Select product-image folder</h2>
-              <p>Paste the Google Drive folder URL.</p>
+              <h2>Enter Google Drive link</h2>
+
+              <p>
+                Paste either a folder URL or an individual image URL.
+              </p>
             </div>
 
           </div>
@@ -898,7 +1173,7 @@ function App() {
             className="field-label"
             htmlFor="folder-url"
           >
-            GOOGLE DRIVE FOLDER LINK
+            GOOGLE DRIVE FOLDER OR IMAGE LINK
           </label>
 
           <div className="url-input-wrap">
@@ -909,7 +1184,7 @@ function App() {
               id="folder-url"
               value={folderUrl}
               onChange={(e) => setFolderUrl(e.target.value)}
-              placeholder="https://drive.google.com/drive/folders/..."
+              placeholder="Paste Google Drive folder or image URL..."
             />
 
             {folderUrl && (
@@ -938,8 +1213,9 @@ function App() {
 
             <span>
               <strong>Include subfolders</strong>
+
               <small>
-                Include nested product categories and their images.
+                Applies when the supplied link is a folder.
               </small>
             </span>
 
@@ -953,12 +1229,12 @@ function App() {
             {status === "scanning" ? (
               <>
                 <LoaderCircle className="spin" size={18} />
-                Scanning Drive…
+                Processing Drive link…
               </>
             ) : (
               <>
                 <FolderOpen size={18} />
-                Scan product images
+                Process Drive link
               </>
             )}
           </button>
@@ -968,7 +1244,7 @@ function App() {
 
               <div className="progress-top">
                 <span>
-                  Scanning: {progress.folderName}
+                  Processing: {progress.folderName}
                 </span>
 
                 <span>
@@ -1006,6 +1282,7 @@ function App() {
         </div>
 
         {/* SIDE INFORMATION */}
+
         <aside className="side-panel">
 
           <div className="side-card">
@@ -1024,9 +1301,10 @@ function App() {
             <div className="included-list">
 
               {[
+                "Folder and individual image links",
                 "Image name and format",
                 "Drive and direct image links",
-                "Thumbnail preview",
+                "Thumbnail previews",
                 "Duplicate file detection",
                 "Formatted Excel and CSV"
               ].map((item) => (
@@ -1060,6 +1338,7 @@ function App() {
       </section>
 
       {/* RESULTS */}
+
       {images.length > 0 && (
         <section className="results-section">
 
@@ -1101,12 +1380,48 @@ function App() {
             </div>
 
           </div>
+          {images.length === 1 &&
+  images[0].folderPath === "Individual image" && (
+    <div className="single-link-result">
+      <div className="single-link-heading">
+        <div>
+          <div className="eyebrow">DIRECT IMAGE LINK</div>
+          <h3>{images[0].name}</h3>
+          <p>Your Google-hosted image URL is ready to copy.</p>
+        </div>
 
-          {/* SUMMARY CARDS */}
+        <button
+          className="copy-link-button"
+          onClick={() => copyDirectLink(images[0])}
+        >
+          {copiedId === images[0].id ? (
+            <Check size={16} />
+          ) : (
+            <Copy size={16} />
+          )}
+
+          {copiedId === images[0].id ? "Copied!" : "Copy link"}
+        </button>
+      </div>
+
+      <div className="direct-link-field">
+        <input
+          type="text"
+          readOnly
+          value={images[0].directLink}
+          onFocus={(e) => e.target.select()}
+        />
+      </div>
+    </div>
+  )}
+
+          {/* STATISTICS */}
+
           <div className="stat-grid">
 
             <div className="stat-card">
               <span>Total images</span>
+
               <strong>
                 {images.length.toLocaleString()}
               </strong>
@@ -1114,28 +1429,37 @@ function App() {
 
             <div className="stat-card">
               <span>Exact duplicate files</span>
-              <strong className={exactDuplicateCount ? "stat-warning" : ""}>
+
+              <strong
+                className={
+                  exactDuplicateCount ? "stat-warning" : ""
+                }
+              >
                 {exactDuplicateCount}
               </strong>
             </div>
 
             <div className="stat-card">
               <span>Repeated filenames</span>
+
               <strong>{repeatedNameCount}</strong>
             </div>
 
             <div className="stat-card">
               <span>Folders scanned</span>
+
               <strong>{progress.foldersScanned}</strong>
             </div>
 
           </div>
 
           {/* SEARCH AND FILTERS */}
+
           <div className="results-toolbar">
 
             <div className="toolbar-title">
               <ImageIcon size={15} />
+
               {filteredImages.length} of {images.length} shown
             </div>
 
@@ -1147,7 +1471,7 @@ function App() {
                 <input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search name or folder…"
+                  placeholder="Search name or folder..."
                 />
               </div>
 
@@ -1166,7 +1490,9 @@ function App() {
               </select>
 
               <button
-                className={`filter-toggle ${duplicateOnly ? "active" : ""}`}
+                className={`filter-toggle ${
+                  duplicateOnly ? "active" : ""
+                }`}
                 onClick={() => setDuplicateOnly(!duplicateOnly)}
               >
                 <Copy size={14} />
@@ -1176,7 +1502,9 @@ function App() {
               <div className="view-toggle">
 
                 <button
-                  className={previewMode === "grid" ? "selected" : ""}
+                  className={
+                    previewMode === "grid" ? "selected" : ""
+                  }
                   onClick={() => setPreviewMode("grid")}
                   title="Grid view"
                 >
@@ -1184,7 +1512,9 @@ function App() {
                 </button>
 
                 <button
-                  className={previewMode === "list" ? "selected" : ""}
+                  className={
+                    previewMode === "list" ? "selected" : ""
+                  }
                   onClick={() => setPreviewMode("list")}
                   title="List view"
                 >
@@ -1198,6 +1528,7 @@ function App() {
           </div>
 
           {/* GRID VIEW */}
+
           {previewMode === "grid" ? (
 
             <div className="image-grid">
@@ -1245,11 +1576,12 @@ function App() {
                         </span>
                       )}
 
-                      {!item.exactDuplicate && item.repeatedName && (
-                        <span className="name-tag">
-                          Repeated name
-                        </span>
-                      )}
+                      {!item.exactDuplicate &&
+                        item.repeatedName && (
+                          <span className="name-tag">
+                            Repeated name
+                          </span>
+                        )}
 
                     </div>
 
@@ -1273,6 +1605,7 @@ function App() {
           ) : (
 
             /* TABLE VIEW */
+
             <div className="table-wrap">
 
               <table>
@@ -1370,14 +1703,17 @@ function App() {
       )}
 
       {/* FOOTER */}
+
       <footer>
         <span>ASHA SWEET CENTER · EST. 1951</span>
+
         <span>
           Internal product-image utility · Google Drive read-only
         </span>
       </footer>
 
       {/* SETTINGS */}
+
       {showSettings && (
 
         <div
@@ -1409,8 +1745,7 @@ function App() {
 
             <p>
               The OAuth Client ID is loaded from your local
-              environment configuration. It is not hard-coded
-              into the application source.
+              environment configuration.
             </p>
 
             <div className="setup-hint">
@@ -1436,22 +1771,20 @@ function App() {
 
               <ol>
                 <li>
-                  Enable Google Drive API in the Asha Sweet Center project.
+                  Enable Google Drive API.
                 </li>
 
                 <li>
-                  Configure Google Auth Platform and add approved
-                  users as test users while in Testing.
+                  Configure Google Auth Platform.
                 </li>
 
                 <li>
-                  Create an OAuth Client ID with application type
-                  <b> Web application</b>.
+                  Create an OAuth Client ID using Web application.
                 </li>
 
                 <li>
-                  Add <code>http://localhost:5173</code> and your
-                  deployed Vercel origin under Authorized JavaScript origins.
+                  Add localhost and your Vercel domain under
+                  Authorized JavaScript origins.
                 </li>
               </ol>
 
